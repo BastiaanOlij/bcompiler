@@ -472,10 +472,12 @@ void apc_serialize_zvalue_value(zvalue_value* zv, zend_uchar type, znode *zn TSR
 #endif
 		break;
 #ifdef ZEND_ENGINE_2_4
+#if PHP_MAJOR_VERSION >= 6
 	case IS_CLASS:
 	case IS_SCALAR:
 	case IS_NUMERIC:
 		break;
+#endif
 #endif
 	default:
 		/* The above list enumerates all types.  If we get here,
@@ -552,10 +554,12 @@ void apc_deserialize_zvalue_value(zvalue_value* zv, zend_uchar type, znode *zn T
 #endif
 		break;
 #ifdef ZEND_ENGINE_2_4
+#if PHP_MAJOR_VERSION >= 6
 	case IS_CLASS:
 	case IS_SCALAR:
 	case IS_NUMERIC:
 		break;
+#endif
 #endif
 	default:
 		/* The above list enumerates all types.  If we get here,
@@ -636,8 +640,10 @@ void apc_serialize_arg_info(zend_arg_info* arg_info TSRMLS_DC)
 	}
 	SERIALIZE_SCALAR(arg_info->allow_null       , zend_bool);
 	SERIALIZE_SCALAR(arg_info->pass_by_reference, zend_bool);
+#ifndef ZEND_ENGINE_2_4
 	SERIALIZE_SCALAR(arg_info->return_reference , zend_bool);
 	SERIALIZE_SCALAR(arg_info->required_num_args, int);
+#endif
 #ifdef ZEND_ENGINE_2_1
 	if (BCOMPILERG(current_write) > 20) {
 # ifdef ZEND_ENGINE_2_4
@@ -667,8 +673,10 @@ void apc_create_arg_info(zend_arg_info* arg_info TSRMLS_DC)
 	else ZS2SR(arg_info->class_name) = NULL;
 	DESERIALIZE_SCALAR(&arg_info->allow_null, zend_bool);
 	DESERIALIZE_SCALAR(&arg_info->pass_by_reference, zend_bool);
+#ifndef ZEND_ENGINE_2_4
 	DESERIALIZE_SCALAR(&arg_info->return_reference, zend_bool);
 	DESERIALIZE_SCALAR(&arg_info->required_num_args, int);
+#endif
 #ifdef ZEND_ENGINE_2_1
 	if (BCOMPILERG(current_version) > 20) {
 # ifdef ZEND_ENGINE_2_4
@@ -883,7 +891,9 @@ void apc_serialize_zend_class_entry(zend_class_entry* zce , char* force_parent_n
 #else
 	SERIALIZE_SCALAR(*(zce->refcount)  	     , int);
 #endif
+#ifndef ZEND_ENGINE_2_4
 	SERIALIZE_SCALAR(zce->constants_updated, zend_bool);
+#endif
 #ifdef ZEND_ENGINE_2
 	SERIALIZE_SCALAR(zce->ce_flags, 	 zend_uint);
 #endif
@@ -930,15 +940,22 @@ void apc_serialize_zend_class_entry(zend_class_entry* zce , char* force_parent_n
 	 * and all the functions. */
 	BCOMPILER_DEBUG(("-----------------------------\nBUILTIN:\n"));
 	count = 0;
+#ifdef ZEND_ENGINE_2_4
+	if (zce->type == ZEND_INTERNAL_CLASS && zce->info.internal.builtin_functions ) { 
+		for (zfe = (zend_function_entry*)zce->info.internal.builtin_functions; zfe->fname != NULL; zfe++) {
+			count++;
+		}
+	}
+#else
 	if (zce->type == ZEND_INTERNAL_CLASS && zce->builtin_functions) { 
 		for (zfe = (zend_function_entry*)zce->builtin_functions; zfe->fname != NULL; zfe++) {
 			count++;
 		}
 	}
-	
+#endif
 	SERIALIZE_SCALAR(count, int);
 	for (i = 0; i < count; i++) {
-		apc_serialize_zend_function_entry((zend_function_entry *)&zce->builtin_functions[i] TSRMLS_CC);
+		apc_serialize_zend_function_entry((zend_function_entry *)&zce->info.internal.builtin_functions[i] TSRMLS_CC);
 	}
 #ifndef ZEND_ENGINE_2
 	/** old code: SERIALIZE_SCALAR(zce->handle_function_call, void*); */
@@ -974,12 +991,21 @@ void apc_serialize_zend_class_entry(zend_class_entry* zce , char* force_parent_n
 	/* do reflection info (file/start/end) !! TODO: check for PHP6 !! */
 #ifdef ZEND_ENGINE_2
 	if (BCOMPILERG(current_write) >= 25) {
+#ifdef ZEND_ENGINE_2_4
+		char* fname = bcompiler_handle_filename(zce->info.user.filename TSRMLS_CC);
+		apc_serialize_string(fname TSRMLS_CC);
+		SERIALIZE_SCALAR(zce->info.user.line_start, int);
+		SERIALIZE_SCALAR(zce->info.user.line_end, int);
+		apc_serialize_zstring(zce->info.user.doc_comment, zce->info.user.doc_comment_len TSRMLS_CC);
+		SERIALIZE_SCALAR(zce->info.user.doc_comment_len, int);
+#else
 		char* fname = bcompiler_handle_filename(zce->filename TSRMLS_CC);
 		apc_serialize_string(fname TSRMLS_CC);
 		SERIALIZE_SCALAR(zce->line_start, int);
 		SERIALIZE_SCALAR(zce->line_end, int);
 		apc_serialize_zstring(zce->doc_comment, zce->doc_comment_len TSRMLS_CC);
 		SERIALIZE_SCALAR(zce->doc_comment_len, int);
+#endif
 	}
 #endif
 
@@ -1089,7 +1115,9 @@ void apc_deserialize_zend_class_entry(zend_class_entry* zce, char **key, int *ke
 		*zce->refcount = 1; /* val: to avoid memort leaks */
 	}
 #endif
+#ifndef ZEND_ENGINE_2_4
 	DESERIALIZE_SCALAR(&zce->constants_updated, zend_bool);
+#endif
 #ifdef ZEND_ENGINE_2
 	DESERIALIZE_SCALAR(&zce->ce_flags, zend_uint);
 #endif
@@ -1184,6 +1212,15 @@ void apc_deserialize_zend_class_entry(zend_class_entry* zce, char **key, int *ke
 	   zend_class_entry.builtin_functions member */
 
 	DESERIALIZE_SCALAR(&count, int);
+#ifdef ZEND_ENGINE_2_4
+	zce->info.internal.builtin_functions = NULL;
+	if (count > 0) {
+		zce->info.internal.builtin_functions = (zend_function_entry*) ecalloc(count+1, sizeof(zend_function_entry));
+		for (i = 0; i < count; i++) {
+			apc_deserialize_zend_function_entry((zend_function_entry*)&zce->info.internal.builtin_functions[i] TSRMLS_CC);
+		}
+	}
+#else
 	zce->builtin_functions = NULL;
 	if (count > 0) {
 		zce->builtin_functions = (zend_function_entry*) ecalloc(count+1, sizeof(zend_function_entry));
@@ -1191,6 +1228,7 @@ void apc_deserialize_zend_class_entry(zend_class_entry* zce, char **key, int *ke
 			apc_deserialize_zend_function_entry((zend_function_entry*)&zce->builtin_functions[i] TSRMLS_CC);
 		}
 	}
+#endif
 #ifndef ZEND_ENGINE_2
 	/** old code: DESERIALIZE_SCALAR(&zce->handle_function_call, void*); */
 	/** old code: DESERIALIZE_SCALAR(&zce->handle_property_get, void*); */
@@ -1237,11 +1275,19 @@ void apc_deserialize_zend_class_entry(zend_class_entry* zce, char **key, int *ke
 	if (BCOMPILERG(current_version) >= 25) {
 		char* fname;
 		apc_create_string_u(&fname, -1 TSRMLS_CC);
+#ifdef ZEND_ENGINE_2_4
+		zce->info.user.filename = fname ? fname : estrdup(BCOMPILERG(current_filename));
+		DESERIALIZE_SCALAR(&zce->info.user.line_start, int);
+		DESERIALIZE_SCALAR(&zce->info.user.line_end, int);
+		apc_create_string_u(ZS2SP(zce->info.user.doc_comment), -1 TSRMLS_CC);
+		DESERIALIZE_SCALAR(&zce->info.user.doc_comment_len, int);
+#else
 		zce->filename = fname ? fname : estrdup(BCOMPILERG(current_filename));
 		DESERIALIZE_SCALAR(&zce->line_start, int);
 		DESERIALIZE_SCALAR(&zce->line_end, int);
 		apc_create_string_u(ZS2SP(zce->doc_comment), -1 TSRMLS_CC);
 		DESERIALIZE_SCALAR(&zce->doc_comment_len, int);
+#endif
 	}
 #endif
 
@@ -1563,16 +1609,20 @@ void apc_serialize_zend_op_array(zend_op_array* zoa TSRMLS_DC)
 #endif
 
 #ifdef ZEND_ENGINE_2_4
+#if PHP_MAJOR_VERSION >= 6
 	SERIALIZE_SCALAR(zoa->last_literal, zend_uint);
 	SERIALIZE_SCALAR(zoa->size_literal, zend_uint);
 	for (i = 0; i < (int) zoa->last_literal; i++) {
 		bc_serialize_zend_literal(&zoa->literals[i] TSRMLS_CC);
 	}
 #endif
+#endif
 
 	SERIALIZE_SCALAR(zoa->refcount[0], zend_uint);
 	SERIALIZE_SCALAR(zoa->last, zend_uint);
+#ifndef ZEND_ENGINE_2_4
 	SERIALIZE_SCALAR(zoa->size, zend_uint);
+#endif
 
 	/* If a file 'A' is included twice in a single request, the following 
 	 * situation can occur: A is deserialized and its functions added to
@@ -1595,7 +1645,9 @@ void apc_serialize_zend_op_array(zend_op_array* zoa TSRMLS_DC)
 
 	SERIALIZE_SCALAR(zoa->T, zend_uint);
 	SERIALIZE_SCALAR(zoa->last_brk_cont, zend_uint);
+#ifndef ZEND_ENGINE_2_4
 	SERIALIZE_SCALAR(zoa->current_brk_cont, zend_uint);
+#endif
 #ifndef ZEND_ENGINE_2
 	SERIALIZE_SCALAR(zoa->uses_globals, zend_bool);
 #endif
@@ -1608,8 +1660,10 @@ void apc_serialize_zend_op_array(zend_op_array* zoa TSRMLS_DC)
 	}
 	apc_serialize_hashtable(zoa->static_variables, apc_serialize_zval_ptr TSRMLS_CC);
 	assert(zoa->start_op == NULL);
+#ifndef ZEND_ENGINE_2_4
 	SERIALIZE_SCALAR(zoa->return_reference, zend_bool);
 	SERIALIZE_SCALAR(zoa->done_pass_two, zend_bool);
+#endif
 	fname = bcompiler_handle_filename(zoa->filename TSRMLS_CC);
 	apc_serialize_string(fname TSRMLS_CC);
 	if (fname) efree(fname);
@@ -1628,9 +1682,12 @@ void apc_serialize_zend_op_array(zend_op_array* zoa TSRMLS_DC)
 #endif
 		SERIALIZE_SCALAR(zoa->fn_flags, zend_uint);
 		SERIALIZE_SCALAR(zoa->required_num_args, zend_uint);
+#ifndef ZEND_ENGINE_2_4
 		SERIALIZE_SCALAR(zoa->pass_rest_by_reference, zend_bool);
-
+#endif
+#ifndef ZEND_ENGINE_2_4
 		SERIALIZE_SCALAR(zoa->backpatch_count, int);
+#endif
 #ifdef ZEND_ENGINE_2_3
 		SERIALIZE_SCALAR(zoa->this_var, zend_uint);
 #else
@@ -1642,7 +1699,9 @@ void apc_serialize_zend_op_array(zend_op_array* zoa TSRMLS_DC)
 #ifdef ZEND_ENGINE_2_1
 	if (BCOMPILERG(current_write) >= 0x0007) {
 		SERIALIZE_SCALAR(zoa->last_var, int);
+#ifndef ZEND_ENGINE_2_4
 		SERIALIZE_SCALAR(zoa->size_var, int);
+#endif
 		for (i = 0; i < zoa->last_var; i++) {
 			SERIALIZE_SCALAR(zoa->vars[i].name_len, int);
 			apc_serialize_zstring(ZS2S(zoa->vars[i].name), ZLEN(zoa->vars[i].name_len) TSRMLS_CC);
@@ -1706,7 +1765,9 @@ void apc_deserialize_zend_op_array(zend_op_array* zoa, int master TSRMLS_DC)
 
 #ifdef ZEND_ENGINE_2_4
 	DESERIALIZE_SCALAR(&zoa->last_literal, zend_uint);
+#if PHP_MAJOR_VERSION >= 6
 	DESERIALIZE_SCALAR(&zoa->size_literal, zend_uint);
+#endif
 	zoa->literals = NULL;
 	if (zoa->last_literal) {
 		zoa->literals = (zend_literal*) ecalloc(zoa->last_literal, sizeof(zend_literal));
@@ -1722,8 +1783,9 @@ void apc_deserialize_zend_op_array(zend_op_array* zoa, int master TSRMLS_DC)
 		*zoa->refcount = 1; /* val: to avoid memort leaks */
 	}
 	DESERIALIZE_SCALAR(&zoa->last, zend_uint);
+#ifndef ZEND_ENGINE_2_4
 	DESERIALIZE_SCALAR(&zoa->size, zend_uint);
-
+#endif
 	zoa->opcodes = NULL;
 
 	if (zoa->last > 0) {
@@ -1736,8 +1798,8 @@ void apc_deserialize_zend_op_array(zend_op_array* zoa, int master TSRMLS_DC)
 
 	DESERIALIZE_SCALAR(&zoa->T, zend_uint);
 	DESERIALIZE_SCALAR(&zoa->last_brk_cont, zend_uint);
-	DESERIALIZE_SCALAR(&zoa->current_brk_cont, zend_uint);
 #ifndef ZEND_ENGINE_2
+	DESERIALIZE_SCALAR(&zoa->current_brk_cont, zend_uint);
 	DESERIALIZE_SCALAR(&zoa->uses_globals, zend_bool);
 #endif
 	
@@ -1749,10 +1811,13 @@ void apc_deserialize_zend_op_array(zend_op_array* zoa, int master TSRMLS_DC)
 	}
 	apc_create_hashtable(&zoa->static_variables, apc_create_zval, NULL, sizeof(zval *) TSRMLS_CC);
  
+#ifndef ZEND_ENGINE_2_4
 	zoa->start_op = NULL;
  
 	DESERIALIZE_SCALAR(&zoa->return_reference, zend_bool);
 	DESERIALIZE_SCALAR(&zoa->done_pass_two, zend_bool);
+#endif
+
 	apc_create_string_u(&fname, -1 TSRMLS_CC);
 	if (fname) {
 		zoa->filename = zend_set_compiled_filename(fname TSRMLS_CC);
@@ -1798,8 +1863,10 @@ void apc_deserialize_zend_op_array(zend_op_array* zoa, int master TSRMLS_DC)
 		zoa->fn_flags &= ~ZEND_ACC_IMPLEMENTED_ABSTRACT; /* this is set later by zend_do_inheritance() */
 #endif
 		DESERIALIZE_SCALAR(&zoa->required_num_args, zend_uint);
+#ifndef ZEND_ENGINE_2_4
 		DESERIALIZE_SCALAR(&zoa->pass_rest_by_reference, zend_bool);
 		DESERIALIZE_SCALAR(&zoa->backpatch_count, int);
+#endif
 #ifdef ZEND_ENGINE_2_3
 		DESERIALIZE_SCALAR(&zoa->this_var, zend_uint);
 #else
@@ -1811,9 +1878,14 @@ void apc_deserialize_zend_op_array(zend_op_array* zoa, int master TSRMLS_DC)
 #ifdef ZEND_ENGINE_2_1
 	if (BCOMPILERG(current_version) >= 0x0007) {
 		DESERIALIZE_SCALAR(&zoa->last_var, int);
+#ifdef ZEND_ENGINE_2_4
+		if (zoa->last_var > 0) {
+			zoa->vars = ecalloc(zoa->last_var, sizeof(zoa->vars[0]));
+#else
 		DESERIALIZE_SCALAR(&zoa->size_var, int);
 		if (zoa->size_var > 0) {
 			zoa->vars = ecalloc(zoa->size_var, sizeof(zoa->vars[0]));
+#endif
 			for (i = 0; i < zoa->last_var; i++) {
 				DESERIALIZE_SCALAR(&(zoa->vars[i].name_len), int);
 				apc_create_string_u(ZS2SP(zoa->vars[i].name), -1 TSRMLS_CC);
