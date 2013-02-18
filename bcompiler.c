@@ -27,7 +27,7 @@
 static const size_t _stdsize_03[] = { BCOMPILER_STDSIZE_03 };
 static const size_t _stdsize_05[] = { BCOMPILER_STDSIZE_05 };
 
-inline void bcompiler_set_stdsize(int ver, const size_t **stdsize) {
+void bcompiler_set_stdsize(int ver, const size_t **stdsize) {
 	*stdsize = (ver < 0x0005) ? _stdsize_03 : _stdsize_05;
 }
 
