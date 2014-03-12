@@ -6,6 +6,8 @@ Copy of bcompiler with small fixes, origin: http://pecl.php.net/package/bcompile
 This is based on bcompiler 1.0.2.
 The attempt for me is to get this running on PHP 5.4 on a Mac OS X 10.8 environment.
 
+Please note, this is just an extract of bcompiler, I do not maintain this source. As far as I can tell this is a dead project.
+
 Requirements
 ============
 
